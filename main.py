@@ -1,36 +1,131 @@
-import os, logging
-from haystack.pipelines.standard_pipelines import TextIndexingPipeline
-from haystack.document_stores import InMemoryDocumentStore
-from haystack.nodes import BM25Retriever, FARMReader
-from haystack.pipelines import ExtractiveQAPipeline
+import gradio as gr
+import numpy as np
+import torch
+from llama_cpp import Llama
+from huggingface_hub import hf_hub_download
+import chromadb
+from datasets import load_dataset
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline  # Import pipeline for ASR
 
-from utils.helper import print_answers
+# Check if CUDA (GPU) is available
+if not torch.cuda.is_available():
+    raise RuntimeError("CUDA is not available. Please ensure your GPU is correctly set up.")
 
-#A DocumentStore stores the Documents that the question answering system uses to find answers to your questions.
-document_store = InMemoryDocumentStore(use_bm25=True)
+# Initialize the Llama model with GPU settings
+llm = Llama(
+    model_path=hf_hub_download(
+        repo_id="TheBloke/CapybaraHermes-2.5-Mistral-7B-GGUF",
+        filename="capybarahermes-2.5-mistral-7b.Q2_K.gguf",
+    ),
+    n_ctx=2048,
+    n_gpu_layers=50,  # Adjust this value based on your GPU's VRAM
+    device_map="auto"  # This will automatically choose the GPU if available
+)
 
-doc_dir = "data/"
-files_to_index = [doc_dir + "/" + f for f in os.listdir(doc_dir)]
+# Initialize the transcriber
+transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-base.en", device=0)
 
-indexing_pipeline = TextIndexingPipeline(document_store)
-indexing_pipeline.run_batch(file_paths=files_to_index)
+class VectorStore:
+    def __init__(self, collection_name):
+        self.embedding_model = SentenceTransformer('sentence-transformers/multi-qa-MiniLM-L6-cos-v1', device = 0)
+        self.chroma_client = chromadb.Client()
+        self.collection = self.chroma_client.create_collection(name=collection_name)
 
-retriever = BM25Retriever(document_store=document_store)
-reader = FARMReader(model_name_or_path="deepset/roberta-base-squad2", use_gpu=True)
-pipe = ExtractiveQAPipeline(reader, retriever)
+    def populate_vectors(self, texts):
+        for i, text in enumerate(texts):
+            embeddings = self.embedding_model.encode(text).tolist()
+            self.collection.add(embeddings=[embeddings], documents=[text], ids=[str(i)])
 
-while True:
-  # Get user input for the question
-  user_query = input("Ask your question (or 'quit' to exit): ")
+    def search_context(self, query, n_results=1):
+        query_embedding = self.embedding_model.encode([query]).tolist()
+        results = self.collection.query(query_embeddings=query_embedding, n_results=n_results)
+        return results['documents']
 
-  # Check if user wants to quit
-  if user_query.lower() == "quit":
-    break
+# Example initialization
 
-  # Run the Haystack pipeline with user query
-  prediction = pipe.run(query=user_query, params={"Retriever": {"top_k": 10}, "Reader": {"top_k": 5}})
+# Load the plain text file
+def load_plain_text(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        texts = f.readlines()
+    return texts
 
-  # Print the answers using your modified print_answers function
-  print_answers(prediction, details="minimum")  # Adjust details if needed
+texts = load_plain_text("data\data_bremen.txt")
 
-print("Goodbye!")
+vector_store = VectorStore("embedding_vector")
+vector_store.populate_vectors(texts)
+
+def transcribe(audio):
+    sr, y = audio
+    y = y.astype(np.float32)
+    y /= np.max(np.abs(y))
+
+    # Use the transcriber pipeline
+    return transcriber({"sampling_rate": sr, "raw": y})["text"]
+
+def generate_text(message, max_tokens=600, temperature=0.3, top_p=0.95):
+    # Retrieve context from vector store
+    context_results = vector_store.search_context(message, n_results=1)
+    context = context_results[0] if context_results else ""
+
+    # Create the prompt template
+    prompt_template = (
+        f"SYSTEM: You are a tour guide for the city of Bremen\n"
+        f"SYSTEM: {context}\n"
+        f"USER: {message}\n"
+        f"ASSISTANT:\n"
+    )
+
+    # Generate text using the language model
+    output = llm(
+            prompt_template,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=40,
+            repeat_penalty=1.1,
+            max_tokens=max_tokens,
+        )
+
+    # Process the output
+    input_string = output['choices'][0]['text'].strip()
+    cleaned_text = input_string.strip("[]'").replace('\\n', '\n')
+    continuous_text = '\n'.join(cleaned_text.split('\n'))
+    return continuous_text
+
+def process_audio(audio):
+    # Transcribe the audio
+    transcribed_text = transcribe(audio)
+    # Generate text based on the transcribed audio
+    generated_text = generate_text(transcribed_text)
+    return generated_text
+
+# Define the Gradio interface
+demo = gr.Interface(
+fn=process_audio,
+    inputs=gr.Audio(sources=["microphone"],label="Input Audio"),
+    outputs=gr.Textbox(label="Generated Text"),
+    title="moinBremen - Your Personal Tour Guide for our City of Bremen",
+    description="Ask your question about Bremen by speaking into the microphone. The system will transcribe your question and provide a response.",
+    # Temporarily remove examples to avoid file path issues
+    # examples=[
+    #     ["Who is Roland ?"],
+    #     ["Is Bremerhaven a part of Bremen?"],
+    #     ["What is Ratskellar?"],
+    #     ["What beers are produced in Bremen?"]
+    # ],
+    cache_examples=False,
+)
+
+# Define a function to restart the interface
+def restart_interface():
+    # This function can include any logic needed to reset the app's state
+    return gr.update()
+
+# Add a custom button to restart the interface
+with gr.Blocks() as app:
+    with gr.Row():
+        demo.render()
+        gr.Button("Restart Space").click(fn=restart_interface, inputs=[], outputs=[demo])
+
+if __name__ == "__main__":
+    demo.launch()
