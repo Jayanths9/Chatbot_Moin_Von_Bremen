@@ -4,9 +4,9 @@ import torch
 from llama_cpp import Llama
 from huggingface_hub import hf_hub_download
 import chromadb
-from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline  # Import pipeline for ASR
+from transformers import pipeline
+from bark import SAMPLE_RATE, generate_audio, preload_models
 
 # Check if CUDA (GPU) is available
 if not torch.cuda.is_available():
@@ -19,12 +19,15 @@ llm = Llama(
         filename="capybarahermes-2.5-mistral-7b.Q2_K.gguf",
     ),
     n_ctx=2048,
-    n_gpu_layers=50,  # Adjust this value based on your GPU's VRAM
+    n_gpu_layers=-1,  # Adjust this value based on your GPU's VRAM
     device_map="auto"  # This will automatically choose the GPU if available
 )
 
 # Initialize the transcriber
 transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-base.en", device=0)
+
+# Preload TTS models
+preload_models()
 
 class VectorStore:
     def __init__(self, collection_name):
@@ -42,8 +45,6 @@ class VectorStore:
         results = self.collection.query(query_embeddings=query_embedding, n_results=n_results)
         return results['documents']
 
-# Example initialization
-
 # Load the plain text file
 def load_plain_text(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
@@ -59,21 +60,19 @@ def transcribe(audio):
     sr, y = audio
     y = y.astype(np.float32)
     y /= np.max(np.abs(y))
-
-    # Use the transcriber pipeline
     return transcriber({"sampling_rate": sr, "raw": y})["text"]
 
-def generate_text(message, max_tokens=600, temperature=0.3, top_p=0.95):
+def generate_text(message, max_tokens=150, temperature=0.2, top_p=0.9):
     # Retrieve context from vector store
     context_results = vector_store.search_context(message, n_results=1)
     context = context_results[0] if context_results else ""
 
     # Create the prompt template
     prompt_template = (
-        f"SYSTEM: You are a tour guide for the city of Bremen\n"
-        f"SYSTEM: {context}\n"
-        f"USER: {message}\n"
-        f"ASSISTANT:\n"
+      f"SYSTEM: You are a tour guide for the city of Bremen answering the question. \n"
+      f"SYSTEM: {context}\n"
+      f"USER: {message}\n"
+      f"ASSISTANT: Here are some examples of short answers: (e.g., The answer is..., In short, ...)\n"
     )
 
     # Generate text using the language model
@@ -81,7 +80,7 @@ def generate_text(message, max_tokens=600, temperature=0.3, top_p=0.95):
             prompt_template,
             temperature=temperature,
             top_p=top_p,
-            top_k=40,
+            top_k=50,
             repeat_penalty=1.1,
             max_tokens=max_tokens,
         )
@@ -92,40 +91,40 @@ def generate_text(message, max_tokens=600, temperature=0.3, top_p=0.95):
     continuous_text = '\n'.join(cleaned_text.split('\n'))
     return continuous_text
 
+fixed_prompt = "en_speaker_5"
+
+def generate_audio_output(text):
+    audio_arr = generate_audio(text, history_prompt=fixed_prompt)
+    audio_arr = (audio_arr * 32767).astype(np.int16)
+    return (SAMPLE_RATE, audio_arr)
+
 def process_audio(audio):
     # Transcribe the audio
     transcribed_text = transcribe(audio)
     # Generate text based on the transcribed audio
     generated_text = generate_text(transcribed_text)
-    return generated_text
+    # output = pipe(generated_text)
+    audio_output = generate_audio_output(generated_text)
+    return generated_text, audio_output
+
+
+def gen_tts(text):
+    audio_arr = generate_audio(text, history_prompt=fixed_prompt)
+    audio_arr = (audio_arr * 32767).astype(np.int16)
+    return (SAMPLE_RATE, audio_arr)
 
 # Define the Gradio interface
-demo = gr.Interface(
-fn=process_audio,
-    inputs=gr.Audio(sources=["microphone"],label="Input Audio"),
-    outputs=gr.Textbox(label="Generated Text"),
-    title="moinBremen - Your Personal Tour Guide for our City of Bremen",
-    description="Ask your question about Bremen by speaking into the microphone. The system will transcribe your question and provide a response.",
-    # Temporarily remove examples to avoid file path issues
-    # examples=[
-    #     ["Who is Roland ?"],
-    #     ["Is Bremerhaven a part of Bremen?"],
-    #     ["What is Ratskellar?"],
-    #     ["What beers are produced in Bremen?"]
-    # ],
-    cache_examples=False,
-)
-
-# Define a function to restart the interface
-def restart_interface():
-    # This function can include any logic needed to reset the app's state
-    return gr.update()
-
-# Add a custom button to restart the interface
 with gr.Blocks() as app:
-    with gr.Row():
-        demo.render()
-        gr.Button("Restart Space").click(fn=restart_interface, inputs=[], outputs=[demo])
+    demo = gr.Interface(
+        fn=process_audio,
+        inputs=gr.Audio(sources=["microphone"], label="Input Audio"),
+        outputs=[gr.Textbox(label="Generated Text"), gr.Audio(label="Generated Audio")],
+        title="moinBremen - Your Personal Tour Guide for our City of Bremen",
+        description="Ask your question about Bremen by speaking into the microphone. The system will transcribe your question, generate a response, and read it out loud.",
+        cache_examples=False,
+    )
+
 
 if __name__ == "__main__":
-    demo.launch()
+    app.queue()
+    app.launch()
