@@ -1,12 +1,20 @@
+import os
 import gradio as gr
 import numpy as np
 import torch
+import faiss
+import json
+import codecs
 from llama_cpp import Llama
 from huggingface_hub import hf_hub_download
-import chromadb
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 from bark import SAMPLE_RATE, generate_audio, preload_models
+from langchain_community.embeddings.openai import OpenAIEmbeddings  # Assuming you used OpenAI before
+from langchain.document_loaders import TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # Check if CUDA (GPU) is available
 if not torch.cuda.is_available():
@@ -29,32 +37,72 @@ transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-bas
 # Preload TTS models
 preload_models()
 
-class VectorStore:
-    def __init__(self, collection_name):
-        self.embedding_model = SentenceTransformer('sentence-transformers/multi-qa-MiniLM-L6-cos-v1', device = 0)
-        self.chroma_client = chromadb.Client()
-        self.collection = self.chroma_client.create_collection(name=collection_name)
+# Path to your local text file
+file_path = r"data\data_bremen.txt"
+#file_path = r"cleared_data.txt"
 
-    def populate_vectors(self, texts):
-        for i, text in enumerate(texts):
-            embeddings = self.embedding_model.encode(text).tolist()
-            self.collection.add(embeddings=[embeddings], documents=[text], ids=[str(i)])
+class VectorStore:
+    def __init__(self, name, embedding_model_name="BAAI/bge-base-en-v1.5", embedding_dim=768):
+        self.name = name
+        self.index = faiss.IndexFlatL2(embedding_dim)  # 768 is the dimension of BAAI/bge-base-en-v1.5 embeddings
+        self.collection = {}
+        self.embedding_dim = embedding_dim
+        self.embedding_model = HuggingFaceEmbeddings(model_name=embedding_model_name)
+
+    def populate_vectors(self, file_path):
+        # Read file
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        
+        # Create Document
+        doc = Document(page_content=text)
+        
+        # Split Document
+        splitter = RecursiveCharacterTextSplitter(chunk_size=256, chunk_overlap=30)
+        chunked_docs = splitter.split_documents([doc])
+        
+        # Embed and add to FAISS
+        for i, chunk in enumerate(chunked_docs):
+            embedding = self.embedding_model.embed_documents([chunk.page_content])
+            embedding_np = np.array(embedding).astype(np.float32)  # Convert to numpy array with correct dtype
+            print(f"Adding embedding {i}: {embedding_np.shape}")
+            self.index.add(embedding_np)
+            self.collection[str(i)] = chunk.page_content
+
+    def save(self, faiss_path, collection_path):
+        faiss.write_index(self.index, faiss_path)
+        with open(collection_path, 'w', encoding='utf-8') as f:
+            json.dump(self.collection, f)
+
+    def load(self, faiss_path, collection_path):
+        self.index = faiss.read_index(faiss_path)
+        with open(collection_path, 'r', encoding='utf-8') as f:
+            self.collection = json.load(f)
+        print(f"Loaded collection: {self.collection}")
 
     def search_context(self, query, n_results=1):
-        query_embedding = self.embedding_model.encode([query]).tolist()
-        results = self.collection.query(query_embeddings=query_embedding, n_results=n_results)
-        return results['documents']
+        query_embedding = self.embedding_model.embed_documents([query])
+        query_embedding_np = np.array(query_embedding).astype(np.float32)
+        print(f"Query embedding: {query_embedding_np.shape}")
+        # Ensure the query embedding has the correct shape
+        if len(query_embedding_np.shape) != 2 or query_embedding_np.shape[1] != self.embedding_dim:
+            raise ValueError(f"Query embedding dimension {query_embedding_np.shape} does not match index dimension {self.embedding_dim}")
+        D, I = self.index.search(query_embedding_np, n_results)
+        results = [self.collection[str(idx)] for idx in I[0]]
+        print(f"Search results: {results}")
+        return results
 
-# Load the plain text file
-def load_plain_text(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        texts = f.readlines()
-    return texts
+# Paths to your files
+faiss_path = r"data\faiss_index2.bin"
+collection_path = r"data\collection2.json"
 
-texts = load_plain_text("data\data_bremen.txt")
+# Check if the files exist
+if not os.path.exists(faiss_path) or not os.path.exists(collection_path):
+    raise FileNotFoundError(f"One or both files {faiss_path}, {collection_path} do not exist.")
 
+# Load the precomputed FAISS index and collection
 vector_store = VectorStore("embedding_vector")
-vector_store.populate_vectors(texts)
+vector_store.load(faiss_path, collection_path)
 
 def transcribe(audio):
     sr, y = audio
@@ -68,11 +116,11 @@ def generate_text(message, max_tokens=150, temperature=0.2, top_p=0.9):
     context = context_results[0] if context_results else ""
 
     # Create the prompt template
+    # Create the prompt template
     prompt_template = (
-      f"SYSTEM: You are a tour guide for the city of Bremen answering the question. \n"
-      f"SYSTEM: {context}\n"
-      f"USER: {message}\n"
-      f"ASSISTANT: Here are some examples of short answers: (e.g., The answer is..., In short, ...)\n"
+        f"Context: {context}\n\n"
+        f"Question: {message}\n\n"
+        f"Based on the provided context, give a concise and accurate answer to the question."
     )
 
     # Generate text using the language model
@@ -101,9 +149,11 @@ def generate_audio_output(text):
 def process_audio(audio):
     # Transcribe the audio
     transcribed_text = transcribe(audio)
+    print(f"Transcribed text: {transcribed_text}")
     # Generate text based on the transcribed audio
     generated_text = generate_text(transcribed_text)
-    # output = pipe(generated_text)
+    print(f"Generated text: {generated_text}")
+    # Generate audio output
     audio_output = generate_audio_output(generated_text)
     return generated_text, audio_output
 
