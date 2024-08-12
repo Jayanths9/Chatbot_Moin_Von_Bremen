@@ -100,7 +100,55 @@ def generate_audio_output(text):
     audio_arr = generate_audio(text, history_prompt=fixed_prompt)
     audio_arr = (audio_arr * 32767).astype(np.int16)
     return (SAMPLE_RATE, audio_arr)
+# Function to retrieve and generate text based on input query
+def generate_text(message, max_tokens=150, temperature=0.2, top_p=0.9):
+    try:
+        # Retrieve context and image from vector store
+        retrieved_image = collection_images.query(query_texts=message, include=['data'], n_results=1)
+        context_text = collection_text.query(query_texts=message, n_results=1)
 
+        context = context_text['documents'][0] if context_text else "No relevant context found."
+        image_data = retrieved_image['uris'][0] if retrieved_image else None
+        image_url = image_data if image_data else None
+
+        # Log the image URL for debugging
+        print(f"Retrieved image URL: {image_url}")
+
+        # Create prompt template for LLM
+        prompt_template = (
+            f"Context: {context}\n\n"
+            f"Question: {message}\n\n"
+            f"You are a guide to city of Bremen from Germany, generate response based on context."
+        )
+
+        # Generate text using the language model
+        output = llm(
+                prompt_template,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=50,
+                repeat_penalty=1.1,
+                max_tokens=max_tokens,
+            )
+
+        # Process the output
+        input_string = output['choices'][0]['text'].strip()
+        cleaned_text = input_string.strip("[]'").replace('\\n', '\n')
+        continuous_text = '\n'.join(cleaned_text.split('\n'))
+
+        return continuous_text, image_url[0]
+    except Exception as e:
+        return f"Error: {str(e)}", None
+
+# Function to load and display an image from a file path
+def load_image_from_path(file_path):
+    try:
+        img = Image.open(file_path)
+        return img
+    except Exception as e:
+        print(f"Error loading image: {str(e)}")
+        return None
+        
 def process_audio(audio):
     # Transcribe the audio
     transcribed_text = transcribe(audio)
