@@ -4,8 +4,8 @@ Welcome to "Moin von Bremen," a fun and interactive project developed by a group
 
 ## 🎥 Project Demo Videos
 
-   [![Demo 1]( demo/edited_1.mp4)]( demo/edited_1.mp4)
-   [![Demo 1]( demo/edited_2.mp4)]( demo/edited_1.mp4)
+   [![Demo 1]( demo/edited_1.mp4)](demo/edited_1.mp4)
+   [![Demo 2]( demo/edited_2.mp4)](demo/edited_2.mp4)
 
 ## 🚀 Project Overview
 
