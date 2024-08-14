@@ -2,11 +2,6 @@
 
 Welcome to "Moin von Bremen," a fun and interactive project developed by a group of enthusiastic Master's students from the University of Bremen. In this project, we dive into the world of LLMs (Large Language Models), explore the power of Retrieval Augmented Generation (RAG), and experiment with the concept of multimodality. Together, we created an audio city guide for our beloved city of Bremen! 🎧🗺️
 
-## 🎥 Project Demo Videos
-
-   [![Demo 1]( demo/edited_1.mp4)](demo/edited_1.mp4)
-   [![Demo 2]( demo/edited_2.mp4)](demo/edited_2.mp4)
-
 ## 🚀 Project Overview
 
 This project is a fascinating journey that starts with the idea of building a chatbot capable of serving as an audio city guide. What better city to choose than Bremen, our home while studying at the University of Bremen? With this guide, you'll get to know Bremen like never before!
