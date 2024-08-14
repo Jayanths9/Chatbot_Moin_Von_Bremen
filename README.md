@@ -31,9 +31,6 @@ Why did we choose ChromaDB over FAISS for this project? Here's a quick compariso
 
 For multi-modal searches (like searching text with image embeddings), ChromaDB offers more flexibility than FAISS. We break down our decision-making process and the implementation in `Main.py`, illustrated in the following diagram (insert diagram here).
 
-### Hosting with Gradio
-
-To make our project accessible to everyone, we hosted it using Gradio on Hugging Face. This allows you to interact with the chatbot through a simple, sharable link. Give it a try! 🌐
 
 ## 🛠️ Setup
 
