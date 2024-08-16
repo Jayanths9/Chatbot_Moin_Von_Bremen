@@ -179,7 +179,7 @@ demo = gr.Interface(
             gr.Audio(label="Generated Audio"),
             gr.Image(label="Retrieved Image")  # New output component for the image
         ],
-        title="moinBremen - Your Personal Tour Guide for our City of Bremen",
+        title="Moin Von Bremen - Your Personal Tour Guide for Bremen",
         description="Ask your question about Bremen by speaking into the microphone. The system will transcribe your question, generate a response, and read it out loud.",
         css=""".gradio-container {
         background: url('file=/content/dom_bremen.jpg') no-repeat center center fixed;
