@@ -1,4 +1,4 @@
-# 🌟 Moin von Bremen 🌟
+# 🌟 Moin Von Bremen 🌟
 
 Welcome to "Moin von Bremen," a fun and interactive project developed by a group of enthusiastic Master's students from the University of Bremen. In this project, we dive into the world of LLMs (Large Language Models), explore the power of Retrieval Augmented Generation (RAG), and experiment with the concept of multimodality. Together, we created an audio city guide for our beloved city of Bremen! 🎧🗺️
 
