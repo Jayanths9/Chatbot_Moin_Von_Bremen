@@ -43,16 +43,18 @@ embedding_function = OpenCLIPEmbeddingFunction()
 image_loader = ImageLoader() # must be if you reads from URIs
 
 # initialize separate collection for image and text data
-collection_images = client.create_collection(
-    name='collection_images',
-    embedding_function=embedding_function,
-    data_loader=image_loader)
-
-collection_text = client.create_collection(
-    name='collection_text',
-    embedding_function=embedding_function,
-    )
-
+def create_collection(name_image_collection,name_text_collection):
+    collection_images = client.create_collection(
+        name=name_image_collection,
+        embedding_function=embedding_function,
+        data_loader=image_loader)
+    
+    collection_text = client.create_collection(
+        name=name_text_collection,
+        embedding_function=embedding_function,
+        )
+    return collection_images, collection_text
+collection_images,collection_text = create_collection(name_image_collection = "collection_images",name_text_collection = "collection_text")
 # Get the uris to the images
 IMAGE_FOLDER = '/images'  # path to image folder
 
